@@ -1,5 +1,6 @@
 """Generate example figures for the skeleton process"""
 
+from collections import namedtuple
 import itertools
 import ast
 import argparse
@@ -8,6 +9,10 @@ import polygonskeletons
 import asywriter
 
 
+Circle = namedtuple('Circle', 'c r')
+@asywriter.drawable_converter(Circle)
+def asy_Circle(c) :
+    return 'path', 'circle((%f,%f),%f)' % (c.c[0], c.c[1], c.r)
 
 if __name__ == '__main__' :
     parser = argparse.ArgumentParser()
@@ -33,25 +38,27 @@ if __name__ == '__main__' :
     transform = 'shift(%f,%f)' % ((-w*1.1, 0) if h > w else (0, h*1.1))
 
     # Asymptote writer
-    asy = asywriter.AsyWriter(size=(600,0), flip_y=True)
+    asy = asywriter.AsyWriter(size=(800,0), flip_y=True)
 
     # draw the input
-    asy.complex_polygon(lines, 'black', 'gray+opacity(0.5)',
-                        transform=transform)
-    asy.dots(itertools.chain(*lines), 'black',
-             transform=transform)
+    asy.draw(lines, 'black', 'gray+opacity(0.5)', transform=transform)
+    asy.dot(itertools.chain(*lines), 'black', transform=transform)
 
     # redraw the shape of the input before adding the output on top
-    asy.complex_polygon(lines, stroke=None, fill='gray+opacity(0.5)')
+    asy.draw(lines, stroke=None, fill='gray+opacity(0.5)')
 
     # draw the edges of the skeleton
     for u,v in G.edges_iter() :
-        asy.line([G.node[u]['xy'],G.node[v]['xy']])
+        if G.node[u]['d'] or G.node[v]['d'] :
+            pen = 'black' if G.node[u]['d'] and G.node[v]['d'] else 'grey'
+            asy.draw([G.node[u]['xy'],G.node[v]['xy']], pen)
 
     # draw the nodes as dots + circles of corresponding radius
     for u,d in G.nodes_iter(data=True) :
-        asy.dot(d['xy'])
-        asy.circle(d['xy'], d['r'], 'black+dotted')
+        if d['d'] :
+            asy.dot(d['xy'])
+            asy.draw(Circle(d['xy'], d['d']), 'black+dotted')
+
 
     # compile to pdf
     asy.compile(output_path)

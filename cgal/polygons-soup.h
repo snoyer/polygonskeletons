@@ -2,15 +2,15 @@
  * The purpose of this class is to turn a mess 'simple polygons'
  * into polygons with holes.
  * For example given the 6 polygons bellow
- *    ___________________________________
- *   |    ____________________________   |
- *   |   |  ______________            |  |
- *   |   | |  ___         |   ____    D  |
- *   |   | | A   |   ___  B  |     |  |  |
- *   |   | | |___|  |_C_| |  |     E  |  |
- *   |   | |______________|  |_____|  |  F
- *   |   |____________________________|  |
- *   |___________________________________|
+ *   .->---------------------------------.
+ *   |   .-<--------------------------.  |
+ *   |   | .->------------.           |  |
+ *   |   | | .-<-.        |  .->---.  D  |
+ *   |   | | A   |  .-<-. B  |     |  |  |
+ *   |   | | `---'  C---' |  |     E  |  |
+ *   |   | `--------------'  `-----'  |  F
+ *   |   `----------------------------'  |
+ *   `-----------------------------------'
  *
  * The desired result is :
  *  - outter boundary F with hole D         (1)
@@ -27,22 +27,16 @@
  *     XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX      XXXXXXX
  *
  *
- * This is done by creating a tree representing the nesting[1] of the input polygons
+ * This is done by creating a tree representing the nesting of the input polygons
  * Each node at an even depth becomes an outter boundary with its children as holes
  * with the previous example :
  *
- *   F           =>     1.  F
+ *  -F           =>     1. -F
  *   `-D                    `-D
- *     +-B       =>     2.  B
+ *     +-B       =>     2. -B
  *     | +-A                +-A
  *     | `-C                `-C
- *     `-E       =>     3.  E
- *
- *
- * [1]: I assumed the following:
- *        - a polygon has only one parent
- *        - a polygon A is included in B iff half its points are inside B
- *      I didn't test degenerate cases with multiple/complex overlaps.
+ *     `-E       =>     3. -E
  *
  */
 
@@ -63,65 +57,58 @@ class PolygonsSoup {
         typedef typename Polygon::const_iterator PolyPtIterator;
         typedef typename std::vector<std::pair<int,int> > RTree;
         typedef typename std::vector<std::vector<Polygon> > PolygonsGroups;
-        typedef typename PolygonsGroups::iterator  PolygonsGroupsIterator;
 
     public:
         static void getPolygonWithHoles(InputIterator begin, InputIterator end, BackInserter out){
             RTree rtree;
-            depthCmp dcmp(&rtree);
             std::vector<Polygon*> polygons;
 
             int n=0;
             for(InputIterator it = begin; it!= end; ++it, ++n){
                 rtree.push_back(std::make_pair(n,-1));
                 polygons.push_back(&*it);
-                if(it->orientation() == CGAL::CLOCKWISE)
-                    it->reverse_orientation();
             }
 
-
-            bool inclusion[n][n];
-            for(int i=0; i<n; ++i)
-            for(int j=0; j<n; ++j) if(j!=i){
-                inclusion[i][j] = polyInPoly(*polygons.at(i)
-                                            ,*polygons.at(j));
-            }
-
+            std::vector<std::vector<unsigned>> includedIn;
             for(int i=0; i<n; ++i){
-                std::vector<int> candidateParents
-                ,                candidateChildren;
-                for(int j=0; j<n; ++j) if(j!=i){
-                    if     (inclusion[i][j]) candidateParents.push_back(j);
-                    else if(inclusion[j][i]) candidateChildren.push_back(j);
-                }
+                std::vector<unsigned> indices;
+                for(unsigned j=0; j<n; ++j)
+                    if(i!=j && polyInPoly(*polygons.at(i)
+                                         ,*polygons.at(j)))
+                        indices.push_back(j);
+                includedIn.push_back(indices);
+            }
 
-                /* fittest parent is deepest candidate parent */
-                if(!candidateParents.empty()){
-                    int parent = *max_element(candidateParents.begin()
-                                             ,candidateParents.end(), dcmp);
+            depthCmp dcmp(&includedIn);
+            for(unsigned i=0; i<n; ++i){
+                if(!includedIn[i].empty()){
+                    unsigned parent = *max_element(includedIn[i].begin()
+                                                  ,includedIn[i].end(), dcmp);
                     rtree.at(i).second = parent;
-                }
-
-                /* fittest child is shallowest candidate child */
-                if(!candidateChildren.empty()){
-                    int child = *min_element(candidateChildren.begin()
-                                            ,candidateChildren.end(), dcmp);
-                    rtree.at(child).second = i;
                 }
             }
 
             /* max depth = 2, nodes having even depth go back up to surface */
             for(int i=0; i<n; ++i)
                 if(candidates_depth(i, &rtree)%2==0)
-                    rtree.at(i).second=-1;
+                    rtree.at(i).second = -1;
+
+            /* holes cannot be the same orientation as their parent */
+            for(auto& pair : rtree)
+                if(pair.second > -1){
+                    const Polygon* a = polygons.at(pair.first);
+                    const Polygon* b = polygons.at(pair.second);
+                    if(a->orientation() == b->orientation())
+                        pair.second = -1;
+                }
 
 
             PolygonsGroups groups;
             std::map<int,int> parent2group;
             /* create a group for each root poly (== outter boundary) */
-            for(RTree::iterator it=rtree.begin(); it!=rtree.end(); ++it){
-                int current = it->first
-                ,   parent  = it->second;
+            for(const auto& pair : rtree){
+                int current = pair.first
+                ,   parent  = pair.second;
                 if(parent < 0){
                     std::vector<Polygon> ps;
                     ps.push_back(*polygons.at(current));
@@ -131,9 +118,9 @@ class PolygonsSoup {
             }
 
             /* push each root poly (== hole) in its parent's group */
-            for(RTree::iterator it=rtree.begin(); it!=rtree.end(); ++it){
-                int current = it->first
-                ,   parent  = it->second;
+            for(const auto& pair : rtree){
+                int current = pair.first
+                ,   parent  = pair.second;
                 if(parent > -1){
                     int group = parent2group[parent];
                     groups.at(group).push_back(*polygons.at(current));
@@ -141,38 +128,34 @@ class PolygonsSoup {
             }
 
             /* now that polygons are grouped, make polygons with holes */
-            for(PolygonsGroupsIterator g = groups.begin()
-               ;                       g != groups.end(); ++g){
+            for(auto& g : groups){
                 /* outter boundary must be CCW orientated */
-                if(g->front().orientation() != CGAL::COUNTERCLOCKWISE)
-                    g->front().reverse_orientation();
+                if(g.front().orientation() != CGAL::COUNTERCLOCKWISE)
+                    g.front().reverse_orientation();
 
                 /* holes must be CW orientated */
-                for(InputIterator hit =  g->begin()+1
-                   ;              hit != g->end(); ++hit)
+                for(InputIterator hit = g.begin()+1; hit != g.end(); ++hit)
                     if(hit->orientation() != CGAL::CLOCKWISE)
                         hit->reverse_orientation();
 
-                PolygonWithHoles pwh(g->front(), g->begin()+1, g->end());
+                PolygonWithHoles pwh(g.front(), g.begin()+1, g.end());
                 out++ = pwh;
             }
         }
 
     private:
 
-        static bool polyInPoly(Polygon& a, Polygon& b){
-            int in = 0, out = 0;
-            int threshold = a.size()/2;
+        static bool polyInPoly(const Polygon& a, const Polygon& b){
             for(PolyPtIterator pit  = a.vertices_begin()
             ;                  pit != a.vertices_end(); ++pit){
-                bool inside = b.bounded_side(*pit) == CGAL::ON_BOUNDED_SIDE;
-                if(++(inside? in:out) > threshold) return inside;
+                if(b.bounded_side(*pit) == CGAL::ON_UNBOUNDED_SIDE)
+                    return false;
             }
-            return in > out;
+            return true;
         }
 
 
-        static int candidates_depth (int i, RTree* rtree) {
+        static int candidates_depth(int i, RTree* rtree) {
             int d = 0;
             while((i=rtree->at(i).second) > -1) ++d;
             return d;
@@ -180,11 +163,11 @@ class PolygonsSoup {
 
 
         class depthCmp {
-            private : RTree* rt;
+            private : std::vector<std::vector<unsigned>>* _vs;
             public:
-                depthCmp(RTree *rtree): rt(rtree){}
-                bool operator() (int ci, int cj) {
-                    return candidates_depth(ci, rt) < candidates_depth(cj, rt);
+                depthCmp(std::vector<std::vector<unsigned>> *vs): _vs(vs){}
+                bool operator() (unsigned ci, unsigned cj) {
+                    return _vs->at(ci).size() < _vs->at(cj).size();
                 }
         };
 };

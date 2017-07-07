@@ -14,6 +14,7 @@ This executable is compiled at install time, meaning `cmake`, `make`, and the CG
 - [ ] improve `setup.py`
 - [ ] maybe proper documentation?
 - [ ] see if CGAL code can be made prettier with more c++11 stuff
+- [ ] use boost::python instead of executable + subprocess
 
 
 

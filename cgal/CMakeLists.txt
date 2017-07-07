@@ -16,7 +16,7 @@ endif()
 find_package(CGAL QUIET COMPONENTS Core )
 
 #FIXME this works but needs two cmake runs to take effect :/
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11 -g")
 
 
 if ( CGAL_FOUND )

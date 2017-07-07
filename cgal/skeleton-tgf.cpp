@@ -50,7 +50,21 @@ struct lt_Vertex_handle {
 typedef boost::shared_ptr<StraightSkeleton> StraightSkeleton_ptr;
 
 
-int main( int argc, char* argv[]) {
+CGAL::Bounded_side bounded_side(const PolygonWithHoles& pwh, const Point& p){
+    const auto outer_side = pwh.outer_boundary().bounded_side(p);
+    if(outer_side != CGAL::ON_BOUNDED_SIDE)
+        return outer_side;
+
+    for(auto hit=pwh.holes_begin(); hit!=pwh.holes_end(); ++hit){
+        const auto hole_side = hit->bounded_side(p);
+        if(hole_side == CGAL::ON_BOUNDED_SIDE) return CGAL::ON_UNBOUNDED_SIDE;
+        if(hole_side == CGAL::ON_BOUNDARY)     return CGAL::ON_BOUNDARY;
+    }
+
+    return outer_side;
+}
+
+int main(int argc, char* argv[]){
 
     /* read each "x0 y0 x1 y1 x2 y2 ..." line from stdin as a polygon */
     std::vector<Polygon> polygons;
@@ -89,17 +103,16 @@ int main( int argc, char* argv[]) {
                    ,std::back_insert_iterator<std::vector<PolygonWithHoles> >
     >::getPolygonWithHoles(polygons.begin(), polygons.end(), std::back_inserter(pwhs));
 
-
-    /* insert all segments from each polygon into an AABB tree */
+    /* insert all points and segments from each polygon into an AABB tree */
     std::list<AabbSegment> segments;
-    for(Polygon p : polygons) {
+    for(const Polygon& p : polygons) {
         std::vector<AabbPoint> pointsAabb;
         for(auto vit = p.vertices_begin(); vit != p.vertices_end(); ++vit)
             pointsAabb.push_back(AabbPoint(vit->x(),vit->y(), 0));
         const size_t np = pointsAabb.size();
-        for(int pi=0; pi<np; ++pi)
+        for(size_t pi=0; pi<np; ++pi)
             segments.push_back(AabbSegment(
-                pointsAabb.at(pi), pointsAabb.at((pi+1)%np)
+                pointsAabb[pi], pointsAabb[(pi+1)%np]
             ));
     }
     AabbTree tree(segments.begin(),segments.end());
@@ -110,30 +123,34 @@ int main( int argc, char* argv[]) {
     std::vector<StraightSkeleton_ptr> sss;
     for(const auto& pwh:pwhs)
         sss.push_back(CGAL::create_interior_straight_skeleton_2(pwh));
+    // std::cout<< "skeltons done" <<std::endl;
 
 
     /* keep track of vertex handle -> node id mapping*/
     std::map<Vertex_const_handle, int, lt_Vertex_handle> vIndexes;
     size_t index = 0;
 
-    /* print tgf `id label` node lines with `x,y,dist` as label */
-    for(auto& ss : sss) {
+    /* print tgf `id label` node lines with `x,y,dist,valid` as label */
+    // for(const auto& ss : sss) {
+    for(unsigned i=0; i<pwhs.size(); ++i) {
+        const auto& ss = sss[i];
+        const auto& pwh = pwhs[i];
         for(auto vit = ss->vertices_begin(); vit != ss->vertices_end(); ++vit){
             const Vertex_const_handle v = vit;
-            if(v->is_skeleton()) {
-                const Point p = v->point();
-                const AabbPoint aabbQ(p.x(),p.y(),0);
-                const AabbPoint aabbR = tree.closest_point(aabbQ);
-                const K::FT d = CGAL::squared_distance(aabbQ,aabbR);
+            const Point p = v->point();
+            const AabbPoint aabbQ(p.x(), p.y(), 0);
+            const AabbPoint aabbR = tree.closest_point(aabbQ);
+            const K::FT sqd = CGAL::squared_distance(aabbQ, aabbR);
 
-                std::cout << index << " "
-                          << CGAL::to_double(p.x()) << ","
-                          << CGAL::to_double(p.y()) << ","
-                          << sqrt(CGAL::to_double(d)) << std::endl;
+            const double d = sqrt(CGAL::to_double(sqd));
+            const bool outside = bounded_side(pwh, p) == CGAL::ON_UNBOUNDED_SIDE;
 
-                vIndexes.insert(std::make_pair(v, index));
-                ++index;
-            }
+            std::cout << index << " "
+                      << p.x() << ","
+                      << p.y() << ","
+                      << (outside? -d:+d) << std::endl;
+
+            vIndexes.insert(std::make_pair(v, index++));
         }
     }
 
@@ -141,15 +158,14 @@ int main( int argc, char* argv[]) {
     std::cout<< "#" << std::endl;
 
     /* print tgf `id1 id2` edge lines */
-    for(auto& ss : sss) {
+    for(const auto& ss : sss) {
         for(auto hit = ss->halfedges_begin(); hit != ss->halfedges_end(); ++hit){
             const Halfedge_const_handle h = hit;
             const Vertex_const_handle& v1 = h->vertex();
             const Vertex_const_handle& v2 = h->opposite()->vertex();
-            if(v1->is_skeleton() && v2->is_skeleton())
-                if(&*v1 < &*v2)
-                    std::cout << vIndexes[v1] << " "
-                              << vIndexes[v2] << std::endl ;
+            if(&*v1 < &*v2)
+                std::cout << vIndexes[v1] << " "
+                          << vIndexes[v2] << std::endl ;
         }
     }
 
